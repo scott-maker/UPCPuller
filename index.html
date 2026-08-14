@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Barcode CSV Formatter</title>
-    <!-- PapaParse CDN for robust CSV handling -->
+    <title>Smart Barcode CSV Formatter</title>
+    <!-- PapaParse CDN for robust CSV parsing -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
     <style>
         :root {
@@ -67,6 +67,7 @@
             border-radius: 6px;
             box-sizing: border-box;
             font-size: 0.95rem;
+            background-color: #fff;
         }
 
         .row {
@@ -76,6 +77,15 @@
 
         .row .form-group {
             flex: 1;
+        }
+
+        .mapping-section {
+            display: none;
+            background: #f1f5f9;
+            padding: 16px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            margin-bottom: 20px;
         }
 
         button {
@@ -95,6 +105,11 @@
             background-color: var(--primary-hover);
         }
 
+        button:disabled {
+            background-color: #94a3b8;
+            cursor: not-allowed;
+        }
+
         .preview-container {
             margin-top: 24px;
             display: none;
@@ -106,14 +121,14 @@
         }
 
         pre {
-            background: #f1f5f9;
+            background: #0f172a;
+            color: #f8fafc;
             padding: 12px;
             border-radius: 6px;
             font-family: monospace;
             font-size: 0.85rem;
             overflow-x: auto;
             max-height: 180px;
-            border: 1px solid var(--border);
             margin: 0;
         }
     </style>
@@ -122,96 +137,138 @@
 
 <div class="container">
     <h1>Barcode CSV Formatter</h1>
-    <p class="subtitle">Upload a CSV where <strong>Column 1 = Name</strong> and <strong>Column 2 = Base UPC</strong>. The app reorders them, pads zero prefixes, encloses all fields in double quotes, and generates a print-ready import file.</p>
+    <p class="subtitle">Upload any CSV file. The app reads your header row to detect columns, reorders them (UPC first, Name second), pads leading zeros, and adds strict double quotes for printing software.</p>
 
     <div class="form-group">
         <label for="csvFileInput">Upload CSV File</label>
-        <input type="file" id="csvFileInput" accept=".csv">
+        <input type="file" id="csvFileInput" accept=".csv" onchange="loadHeaders()">
     </div>
 
-    <div class="row">
-        <div class="form-group">
-            <label for="upcLength">Target UPC Length</label>
+    <!-- Mapping Options (Appears automatically when file is loaded) -->
+    <div class="mapping-section" id="mappingSection">
+        <div class="row">
+            <div class="form-group">
+                <label for="upcSelect">Base UPC Column:</label>
+                <select id="upcSelect"></select>
+            </div>
+            <div class="form-group">
+                <label for="nameSelect">Name Column:</label>
+                <select id="nameSelect"></select>
+            </div>
+        </div>
+        <div class="form-group" style="margin-bottom: 0;">
+            <label for="upcLength">Target UPC Length (Digits):</label>
             <input type="number" id="upcLength" value="12" min="1" max="20">
         </div>
-        <div class="form-group">
-            <label for="hasHeader">Header Row?</label>
-            <select id="hasHeader">
-                <option value="yes" selected>Yes (Row 1 is headers)</option>
-                <option value="no">No (Data starts on Row 1)</option>
-            </select>
-        </div>
     </div>
 
-    <button onclick="processCSV()">Format & Download</button>
+    <button id="processBtn" onclick="processAndDownload()" disabled>Format & Download CSV</button>
 
     <div class="preview-container" id="previewContainer">
-        <h3>Output Preview (First 5 Rows):</h3>
+        <h3>Output Preview:</h3>
         <pre id="previewText"></pre>
     </div>
 </div>
 
 <script>
-    function processCSV() {
-        const fileInput = document.getElementById('csvFileInput');
-        const upcLength = parseInt(document.getElementById('upcLength').value, 10);
-        const hasHeader = document.getElementById('hasHeader').value === 'yes';
+    let rawCsvData = [];
 
-        if (!fileInput.files.length) {
-            alert('Please select a CSV file to upload.');
-            return;
-        }
+    // Step 1: Read CSV headers and auto-select matching columns
+    function loadHeaders() {
+        const fileInput = document.getElementById('csvFileInput');
+        if (!fileInput.files.length) return;
 
         Papa.parse(fileInput.files[0], {
             skipEmptyLines: true,
             complete: function(results) {
-                const data = results.data;
-                if (!data || data.length === 0) {
-                    alert('The uploaded CSV file appears to be empty.');
+                rawCsvData = results.data;
+                if (!rawCsvData || rawCsvData.length < 1) {
+                    alert('The uploaded CSV appears to be empty.');
                     return;
                 }
 
-                let outputRows = [];
-                let startIndex = 0;
+                const headers = rawCsvData[0];
+                const upcSelect = document.getElementById('upcSelect');
+                const nameSelect = document.getElementById('nameSelect');
 
-                // Handle Headers
-                if (hasHeader) {
-                    let nameHeader = (data[0][0] || 'Name').trim();
-                    let upcHeader = (data[0][1] || 'UPC').trim();
-                    outputRows.push(`"${upcHeader}","${nameHeader}"`);
-                    startIndex = 1;
-                }
+                // Clear previous options
+                upcSelect.innerHTML = '';
+                nameSelect.innerHTML = '';
 
-                // Process Data Rows
-                for (let i = startIndex; i < data.length; i++) {
-                    let row = data[i];
-                    if (row.length < 2) continue; // Skip incomplete rows
+                // Populate Dropdowns with header choices
+                headers.forEach((header, index) => {
+                    const cleanHeader = (header || `Column ${index + 1}`).trim();
+                    upcSelect.options.add(new Option(cleanHeader, index));
+                    nameSelect.options.add(new Option(cleanHeader, index));
+                });
 
-                    let name = (row[0] || '').trim();
-                    let rawUpc = (row[1] || '').trim().replace(/[^0-9]/g, ''); // Extract digits only
+                // Auto-detect best match using regex
+                headers.forEach((header, index) => {
+                    const h = String(header).toLowerCase();
+                    if (/upc|barcode|code|sku/i.test(h)) {
+                        upcSelect.value = index;
+                    }
+                    if (/name|title|desc|item|product/i.test(h)) {
+                        nameSelect.value = index;
+                    }
+                });
 
-                    // Pad with leading zeros
-                    let paddedUpc = rawUpc.padStart(upcLength, '0');
-
-                    // Format: "UPC","Name"
-                    outputRows.push(`"${paddedUpc}","${name}"`);
-                }
-
-                const csvContent = outputRows.join('\n');
-
-                // Render Preview
-                const previewContainer = document.getElementById('previewContainer');
-                const previewText = document.getElementById('previewText');
-                previewContainer.style.display = 'block';
-                previewText.textContent = outputRows.slice(0, 6).join('\n') + (outputRows.length > 6 ? '\n...' : '');
-
-                // Trigger Download
-                downloadFile(csvContent, 'formatted_barcode_import.csv');
+                // Show settings & enable button
+                document.getElementById('mappingSection').style.display = 'block';
+                document.getElementById('processBtn').disabled = false;
             },
             error: function(err) {
-                alert('Error parsing CSV file: ' + err.message);
+                alert('Error parsing CSV: ' + err.message);
             }
         });
+    }
+
+    // Step 2: Extract selected columns, pad zeros, wrap quotes, and reorder
+    function processAndDownload() {
+        if (!rawCsvData.length) return;
+
+        const upcIdx = parseInt(document.getElementById('upcSelect').value, 10);
+        const nameIdx = parseInt(document.getElementById('nameSelect').value, 10);
+        const upcLength = parseInt(document.getElementById('upcLength').value, 10);
+
+        let outputRows = [];
+
+        // Dynamic Header Row ("UPC","Name")
+        const origUpcHeader = (rawCsvData[0][upcIdx] || 'UPC').trim();
+        const origNameHeader = (rawCsvData[0][nameIdx] || 'Name').trim();
+        outputRows.push(`"${origUpcHeader}","${origNameHeader}"`);
+
+        // Process Data Rows
+        for (let i = 1; i < rawCsvData.length; i++) {
+            const row = rawCsvData[i];
+            
+            // Extract raw values safely
+            let rawName = (row[nameIdx] !== undefined ? String(row[nameIdx]) : '').trim();
+            let rawUpc = (row[upcIdx] !== undefined ? String(row[upcIdx]) : '').trim();
+
+            // Sanitize UPC (strip non-digits)
+            let digitsOnly = rawUpc.replace(/[^0-9]/g, '');
+
+            // Pad leading zeros
+            let paddedUpc = digitsOnly.padStart(upcLength, '0');
+
+            // Sanitize Name (escape existing double quotes by doubling them)
+            let cleanName = rawName.replace(/"/g, '""');
+
+            // Append standard output: "UPC","Name"
+            outputRows.push(`"${paddedUpc}","${cleanName}"`);
+        }
+
+        const finalCsvContent = outputRows.join('\n');
+
+        // Update Preview
+        const previewContainer = document.getElementById('previewContainer');
+        const previewText = document.getElementById('previewText');
+        previewContainer.style.display = 'block';
+        previewText.textContent = outputRows.slice(0, 6).join('\n') + (outputRows.length > 6 ? '\n...' : '');
+
+        // Trigger Download
+        downloadFile(finalCsvContent, 'barcode_import.csv');
     }
 
     function downloadFile(content, filename) {
