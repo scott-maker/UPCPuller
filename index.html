@@ -3,250 +3,286 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Procurement & Sourcing System</title>
-    
-    <!-- React & ReactDOM -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    
-    <!-- Babel for in-browser JSX transpiling -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
-    <!-- Tailwind CSS for styling -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>Smart Barcode CSV Formatter</title>
+    <!-- PapaParse CDN for robust CSV parsing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --bg: #f8fafc;
+            --card: #ffffff;
+            --text: #0f172a;
+            --border: #cbd5e1;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 40px 20px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 600px;
+            background: var(--card);
+            padding: 32px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            border: 1px solid var(--border);
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            margin-top: 0;
+            margin-bottom: 8px;
+        }
+
+        p.subtitle {
+            color: #64748b;
+            font-size: 0.95rem;
+            margin-bottom: 24px;
+            line-height: 1.4;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 6px;
+            font-size: 0.9rem;
+        }
+
+        input[type="file"], input[type="number"], select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            box-sizing: border-box;
+            font-size: 0.95rem;
+            background-color: #fff;
+        }
+
+        .row {
+            display: flex;
+            gap: 16px;
+        }
+
+        .row .form-group {
+            flex: 1;
+        }
+
+        .mapping-section {
+            display: none;
+            background: #f1f5f9;
+            padding: 16px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            margin-bottom: 20px;
+        }
+
+        button {
+            width: 100%;
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        button:hover {
+            background-color: var(--primary-hover);
+        }
+
+        button:disabled {
+            background-color: #94a3b8;
+            cursor: not-allowed;
+        }
+
+        .preview-container {
+            margin-top: 24px;
+            display: none;
+        }
+
+        .preview-container h3 {
+            font-size: 0.95rem;
+            margin-bottom: 8px;
+        }
+
+        pre {
+            background: #0f172a;
+            color: #f8fafc;
+            padding: 12px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 0.85rem;
+            overflow-x: auto;
+            max-height: 180px;
+            margin: 0;
+        }
+    </style>
 </head>
-<body class="bg-gray-100 text-gray-800">
-    <div id="root"></div>
+<body>
 
-    <script type="text/babel">
-        const { useState, useEffect } = React;
+<div class="container">
+    <h1>Barcode CSV Formatter</h1>
+    <p class="subtitle">Upload any CSV file. The app reads your header row to detect columns, reorders them (UPC first, Name second), pads leading zeros, and adds strict double quotes for printing software.</p>
 
-        // --- Custom Hook for Local Storage ---
-        function useLocalStorage(key, initialValue) {
-            const [storedValue, setStoredValue] = useState(() => {
-                try {
-                    const item = window.localStorage.getItem(key);
-                    return item ? JSON.parse(item) : initialValue;
-                } catch (error) {
-                    console.error(error);
-                    return initialValue;
+    <div class="form-group">
+        <label for="csvFileInput">Upload CSV File</label>
+        <input type="file" id="csvFileInput" accept=".csv" onchange="loadHeaders()">
+    </div>
+
+    <!-- Mapping Options (Appears automatically when file is loaded) -->
+    <div class="mapping-section" id="mappingSection">
+        <div class="row">
+            <div class="form-group">
+                <label for="upcSelect">Base UPC Column:</label>
+                <select id="upcSelect"></select>
+            </div>
+            <div class="form-group">
+                <label for="nameSelect">Name Column:</label>
+                <select id="nameSelect"></select>
+            </div>
+        </div>
+        <div class="form-group" style="margin-bottom: 0;">
+            <label for="upcLength">Target UPC Length (Digits):</label>
+            <input type="number" id="upcLength" value="12" min="1" max="20">
+        </div>
+    </div>
+
+    <button id="processBtn" onclick="processAndDownload()" disabled>Format & Download CSV</button>
+
+    <div class="preview-container" id="previewContainer">
+        <h3>Output Preview:</h3>
+        <pre id="previewText"></pre>
+    </div>
+</div>
+
+<script>
+    let rawCsvData = [];
+
+    // Step 1: Read CSV headers and auto-select matching columns
+    function loadHeaders() {
+        const fileInput = document.getElementById('csvFileInput');
+        if (!fileInput.files.length) return;
+
+        Papa.parse(fileInput.files[0], {
+            skipEmptyLines: true,
+            complete: function(results) {
+                rawCsvData = results.data;
+                if (!rawCsvData || rawCsvData.length < 1) {
+                    alert('The uploaded CSV appears to be empty.');
+                    return;
                 }
-            });
 
-            const setValue = (value) => {
-                try {
-                    const valueToStore = value instanceof Function ? value(storedValue) : value;
-                    setStoredValue(valueToStore);
-                    window.localStorage.setItem(key, JSON.stringify(valueToStore));
-                } catch (error) {
-                    console.error(error);
-                }
-            };
-            return [storedValue, setValue];
-        }
+                const headers = rawCsvData[0];
+                const upcSelect = document.getElementById('upcSelect');
+                const nameSelect = document.getElementById('nameSelect');
 
-        // --- Main Application Component ---
-        function ProcurementApp() {
-            const [activeTab, setActiveTab] = useState('dashboard');
+                // Clear previous options
+                upcSelect.innerHTML = '';
+                nameSelect.innerHTML = '';
+
+                // Populate Dropdowns with header choices
+                headers.forEach((header, index) => {
+                    const cleanHeader = (header || `Column ${index + 1}`).trim();
+                    upcSelect.options.add(new Option(cleanHeader, index));
+                    nameSelect.options.add(new Option(cleanHeader, index));
+                });
+
+                // Auto-detect best match using regex
+                headers.forEach((header, index) => {
+                    const h = String(header).toLowerCase();
+                    if (/upc|barcode|code|sku/i.test(h)) {
+                        upcSelect.value = index;
+                    }
+                    if (/name|title|desc|item|product/i.test(h)) {
+                        nameSelect.value = index;
+                    }
+                });
+
+                // Show settings & enable button
+                document.getElementById('mappingSection').style.display = 'block';
+                document.getElementById('processBtn').disabled = false;
+            },
+            error: function(err) {
+                alert('Error parsing CSV: ' + err.message);
+            }
+        });
+    }
+
+    // Step 2: Extract selected columns, pad zeros, wrap quotes, and reorder
+    function processAndDownload() {
+        if (!rawCsvData.length) return;
+
+        const upcIdx = parseInt(document.getElementById('upcSelect').value, 10);
+        const nameIdx = parseInt(document.getElementById('nameSelect').value, 10);
+        const upcLength = parseInt(document.getElementById('upcLength').value, 10);
+
+        let outputRows = [];
+
+        // Dynamic Header Row ("UPC","Name")
+        const origUpcHeader = (rawCsvData[0][upcIdx] || 'UPC').trim();
+        const origNameHeader = (rawCsvData[0][nameIdx] || 'Name').trim();
+        outputRows.push(`"${origUpcHeader}","${origNameHeader}"`);
+
+        // Process Data Rows
+        for (let i = 1; i < rawCsvData.length; i++) {
+            const row = rawCsvData[i];
             
-            // Database State (Persisted in browser)
-            const [items, setItems] = useLocalStorage('proc_items', [
-                { id: 1, sku: 'SKU-1001', name: 'Industrial Sealant 10oz', category: 'Adhesives' }
-            ]);
-            const [vendors, setVendors] = useLocalStorage('proc_vendors', [
-                { id: 1, name: 'Acme Supply Co.', terms: 'Net 30', score: 98.5 }
-            ]);
-            const [bids, setBids] = useLocalStorage('proc_bids', []);
-            const [pos, setPos] = useLocalStorage('proc_pos', []);
+            // Extract raw values safely
+            let rawName = (row[nameIdx] !== undefined ? String(row[nameIdx]) : '').trim();
+            let rawUpc = (row[upcIdx] !== undefined ? String(row[upcIdx]) : '').trim();
 
-            // --- Handlers ---
-            const createPO = (bidId) => {
-                const bid = bids.find(b => b.id === bidId);
-                const newPO = {
-                    id: Date.now(),
-                    poNumber: `PO-${Math.floor(Math.random() * 10000)}`,
-                    vendorId: bid.vendorId,
-                    itemId: bid.itemId,
-                    quantity: bid.quantity,
-                    unitPrice: bid.unitPrice,
-                    status: 'ISSUED',
-                    date: new Date().toLocaleDateString()
-                };
-                setPos([...pos, newPO]);
-                setBids(bids.map(b => b.id === bidId ? { ...b, awarded: true } : b));
-                alert(`PO ${newPO.poNumber} Generated Successfully!`);
-            };
+            // Sanitize UPC (strip non-digits)
+            let digitsOnly = rawUpc.replace(/[^0-9]/g, '');
 
-            const receiveGoods = (poId) => {
-                setPos(pos.map(p => p.id === poId ? { ...p, status: 'FULFILLED' } : p));
-                alert('Goods Received and Logged!');
-            };
+            // Pad leading zeros
+            let paddedUpc = digitsOnly.padStart(upcLength, '0');
 
-            const submitBid = (e) => {
-                e.preventDefault();
-                const form = e.target;
-                const newBid = {
-                    id: Date.now(),
-                    itemId: parseInt(form.item.value),
-                    vendorId: parseInt(form.vendor.value),
-                    quantity: parseInt(form.qty.value),
-                    unitPrice: parseFloat(form.price.value),
-                    awarded: false
-                };
-                setBids([...bids, newBid]);
-                form.reset();
-                alert('Bid logged for comparison!');
-            };
+            // Sanitize Name (escape existing double quotes by doubling them)
+            let cleanName = rawName.replace(/"/g, '""');
 
-            // --- View Components ---
-            const renderDashboard = () => (
-                <div class="grid grid-cols-3 gap-4">
-                    <div class="bg-white p-6 rounded shadow border-t-4 border-blue-500">
-                        <h3 class="text-gray-500 text-sm font-bold">Total Items</h3>
-                        <p class="text-3xl font-black">{items.length}</p>
-                    </div>
-                    <div class="bg-white p-6 rounded shadow border-t-4 border-green-500">
-                        <h3 class="text-gray-500 text-sm font-bold">Active Vendors</h3>
-                        <p class="text-3xl font-black">{vendors.length}</p>
-                    </div>
-                    <div class="bg-white p-6 rounded shadow border-t-4 border-purple-500">
-                        <h3 class="text-gray-500 text-sm font-bold">Open Purchase Orders</h3>
-                        <p class="text-3xl font-black">{pos.filter(p => p.status === 'ISSUED').length}</p>
-                    </div>
-                </div>
-            );
-
-            const renderBidding = () => (
-                <div class="bg-white p-6 rounded shadow">
-                    <h2 class="text-xl font-bold mb-4 border-b pb-2">Log Vendor Bid / RFQ Response</h2>
-                    <form onSubmit={submitBid} class="grid grid-cols-5 gap-4 mb-8">
-                        <select name="item" required class="border p-2 rounded">
-                            <option value="">Select Item...</option>
-                            {items.map(i => <option key={i.id} value={i.id}>{i.sku} - {i.name}</option>)}
-                        </select>
-                        <select name="vendor" required class="border p-2 rounded">
-                            <option value="">Select Vendor...</option>
-                            {vendors.map(v => <option key={v.id} value={v.id}>{v.name} (Score: {v.score})</option>)}
-                        </select>
-                        <input type="number" name="qty" placeholder="Quantity" required class="border p-2 rounded" />
-                        <input type="number" step="0.01" name="price" placeholder="Unit Price ($)" required class="border p-2 rounded" />
-                        <button type="submit" class="bg-blue-600 text-white font-bold py-2 px-4 rounded hover:bg-blue-700">Add Bid</button>
-                    </form>
-
-                    <h2 class="text-xl font-bold mb-4 border-b pb-2">Bid Comparison Matrix</h2>
-                    <table class="min-w-full bg-white border">
-                        <thead>
-                            <tr class="bg-gray-100 text-left">
-                                <th class="p-3 border">Item</th>
-                                <th class="p-3 border">Vendor</th>
-                                <th class="p-3 border">Qty</th>
-                                <th class="p-3 border">Unit Price</th>
-                                <th class="p-3 border">Total Cost</th>
-                                <th class="p-3 border">Action</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {bids.filter(b => !b.awarded).map(bid => (
-                                <tr key={bid.id} class="border-b">
-                                    <td class="p-3">{items.find(i => i.id === bid.itemId)?.name}</td>
-                                    <td class="p-3 font-bold text-blue-600">{vendors.find(v => v.id === bid.vendorId)?.name}</td>
-                                    <td class="p-3">{bid.quantity}</td>
-                                    <td class="p-3">${bid.unitPrice.toFixed(2)}</td>
-                                    <td class="p-3">${(bid.quantity * bid.unitPrice).toFixed(2)}</td>
-                                    <td class="p-3">
-                                        <button onClick={() => createPO(bid.id)} class="bg-green-500 text-white px-3 py-1 rounded text-sm hover:bg-green-600">Award & Create PO</button>
-                                    </td>
-                                </tr>
-                            ))}
-                            {bids.filter(b => !b.awarded).length === 0 && (
-                                <tr><td colSpan="6" class="p-4 text-center text-gray-500">No pending bids.</td></tr>
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            );
-
-            const renderPOs = () => (
-                <div class="bg-white p-6 rounded shadow">
-                    <h2 class="text-xl font-bold mb-4 border-b pb-2">Purchase Orders & Receiving</h2>
-                    <table class="min-w-full bg-white border">
-                        <thead>
-                            <tr class="bg-gray-100 text-left">
-                                <th class="p-3 border">PO Number</th>
-                                <th class="p-3 border">Vendor</th>
-                                <th class="p-3 border">Item</th>
-                                <th class="p-3 border">Total ($)</th>
-                                <th class="p-3 border">Status</th>
-                                <th class="p-3 border">Action</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {pos.map(po => (
-                                <tr key={po.id} class="border-b">
-                                    <td class="p-3 font-bold">{po.poNumber}</td>
-                                    <td class="p-3">{vendors.find(v => v.id === po.vendorId)?.name}</td>
-                                    <td class="p-3">{items.find(i => i.id === po.itemId)?.name} ({po.quantity})</td>
-                                    <td class="p-3">${(po.quantity * po.unitPrice).toFixed(2)}</td>
-                                    <td class="p-3">
-                                        <span class={`px-2 py-1 rounded text-xs font-bold ${po.status === 'ISSUED' ? 'bg-yellow-200 text-yellow-800' : 'bg-green-200 text-green-800'}`}>
-                                            {po.status}
-                                        </span>
-                                    </td>
-                                    <td class="p-3">
-                                        {po.status === 'ISSUED' && (
-                                            <button onClick={() => receiveGoods(po.id)} class="bg-purple-500 text-white px-3 py-1 rounded text-sm hover:bg-purple-600">Receive Goods</button>
-                                        )}
-                                        {po.status === 'FULFILLED' && (
-                                            <span class="text-gray-400 text-sm">Closed</span>
-                                        )}
-                                    </td>
-                                </tr>
-                            ))}
-                            {pos.length === 0 && (
-                                <tr><td colSpan="6" class="p-4 text-center text-gray-500">No Purchase Orders yet.</td></tr>
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            );
-
-            return (
-                <div class="min-h-screen flex flex-col">
-                    {/* Top Navigation */}
-                    <header class="bg-gray-900 text-white p-4 shadow-md">
-                        <div class="max-w-6xl mx-auto flex justify-between items-center">
-                            <h1 class="text-2xl font-black tracking-tight">PROCURE<span class="text-blue-400">SYNC</span></h1>
-                            <nav class="space-x-4">
-                                {['dashboard', 'bidding', 'pos'].map(tab => (
-                                    <button 
-                                        key={tab}
-                                        onClick={() => setActiveTab(tab)}
-                                        class={`px-3 py-2 rounded font-semibold capitalize ${activeTab === tab ? 'bg-blue-600' : 'hover:bg-gray-700'}`}
-                                    >
-                                        {tab === 'pos' ? 'Purchase Orders' : tab}
-                                    </button>
-                                ))}
-                            </nav>
-                        </div>
-                    </header>
-
-                    {/* Main Content Area */}
-                    <main class="flex-grow max-w-6xl mx-auto w-full p-6">
-                        {activeTab === 'dashboard' && renderDashboard()}
-                        {activeTab === 'bidding' && renderBidding()}
-                        {activeTab === 'pos' && renderPOs()}
-                    </main>
-                    
-                    <footer class="text-center p-4 text-gray-400 text-sm">
-                        Single-File React Procurement Prototype • Data saved to LocalStorage
-                    </footer>
-                </div>
-            );
+            // Append standard output: "UPC","Name"
+            outputRows.push(`"${paddedUpc}","${cleanName}"`);
         }
 
-        // Render the app to the DOM
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<ProcurementApp />);
-    </script>
+        const finalCsvContent = outputRows.join('\n');
+
+        // Update Preview
+        const previewContainer = document.getElementById('previewContainer');
+        const previewText = document.getElementById('previewText');
+        previewContainer.style.display = 'block';
+        previewText.textContent = outputRows.slice(0, 6).join('\n') + (outputRows.length > 6 ? '\n...' : '');
+
+        // Trigger Download
+        downloadFile(finalCsvContent, 'barcode_import.csv');
+    }
+
+    function downloadFile(content, filename) {
+        const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    }
+</script>
+
 </body>
 </html>
